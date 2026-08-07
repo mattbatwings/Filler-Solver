@@ -67,9 +67,12 @@ PLAYER_NAMES = ["Player 1", "Player 2"]
 
 TILE = 66
 GAP = 5
-BOARD_X, BOARD_Y = 46, 132
+BOARD_X, BOARD_Y = 46, 160
 BOARD_W = W * TILE + (W - 1) * GAP
 BOARD_H = H * TILE + (H - 1) * GAP
+
+EVAL_H = 18
+EVAL_Y = BOARD_Y - 48
 
 PANEL_X = BOARD_X + BOARD_W + 40
 PANEL_W = 380
@@ -168,14 +171,14 @@ def validate_board(board: list[list[int]]) -> list[str]:
 
 
 class Game:
-    def __init__(self, board: list[list[int]]):
+    def __init__(self, board: list[list[int]], first: int = 0):
         self.colors = [row[:] for row in board]
         self.owner = [[EMPTY] * W for _ in range(H)]
         self.owner[0][0] = 0
         self.owner[H - 1][W - 1] = 1
 
         self.player_color = [self.colors[0][0], self.colors[H - 1][W - 1]]
-        self.turn = 0
+        self.turn = first
         self.history: list[tuple] = []
 
     # -- queries ---------------------------------------------------------
@@ -358,7 +361,7 @@ class Solver:
         if head.startswith("ERR"):
             raise SolverError(head[4:].strip())
 
-        out = {"best": -1, "scores": {}, "nodes": 0, "ms": 0, "side": side}
+        out = {"best": -1, "scores": {}, "captures": {}, "nodes": 0, "ms": 0, "side": side}
 
         while True:
             line = proc.stdout.readline()
@@ -375,8 +378,9 @@ class Solver:
                 out["best"] = int(parts[1])
                 if len(parts) > 2 and parts[2] != "-":
                     for chunk in parts[2].split(","):
-                        c, s = chunk.split(":")
+                        c, s, gain = chunk.split(":")
                         out["scores"][int(c)] = int(s)
+                        out["captures"][int(c)] = int(gain)
             elif parts[0] == "NODES":
                 out["nodes"] = int(parts[1])
                 out["ms"] = int(parts[2])
@@ -520,9 +524,13 @@ class Button:
         self.kind = kind
         self.enabled = True
         self.hover = False
+        self.selected = False
 
     def draw(self, surf, fnt):
-        if self.kind == "primary":
+        if self.kind == "toggle":
+            base = ACCENT if self.selected else (255, 255, 255)
+            fg = (255, 255, 255) if self.selected else INK
+        elif self.kind == "primary":
             base = ACCENT if self.enabled else (198, 205, 216)
             fg = (255, 255, 255)
         else:
@@ -530,10 +538,11 @@ class Button:
             fg = INK if self.enabled else (183, 188, 196)
 
         if self.enabled and self.hover:
-            base = tuple(max(0, min(255, v + (18 if self.kind != "primary" else -18))) for v in base)
+            lift = -18 if (self.kind == "primary" or self.selected) else 18
+            base = tuple(max(0, min(255, v + lift)) for v in base)
 
         pygame.draw.rect(surf, base, self.rect, border_radius=10)
-        if self.kind != "primary":
+        if self.kind != "primary" and not self.selected:
             pygame.draw.rect(surf, LINE, self.rect, width=1, border_radius=10)
 
         label = fnt.render(self.label, True, fg)
@@ -571,6 +580,7 @@ class App:
 
         self.mode = SETUP
         self.board = random_board()
+        self.first_player = 0
         self.paint_color = 0
         self.painting = False
         self.erasing = False
@@ -579,10 +589,16 @@ class App:
         self.message = ""
         self._territory_key: tuple | None = None
         self._territory_surf = pygame.Surface((1, 1), pygame.SRCALPHA)
+        self._eval_target = 0.5   # player 1's predicted share of the board
+        self._eval_share = 0.5    # what is drawn, eased toward the target
 
-        self.btn_random = Button((PANEL_X, 300, 180, 44), "Randomize")
-        self.btn_clear = Button((PANEL_X + 200, 300, 180, 44), "Clear")
-        self.btn_start = Button((PANEL_X, 470, PANEL_W, 52), "Start game", "primary")
+        self.btn_random = Button((PANEL_X, 292, 180, 44), "Randomize")
+        self.btn_clear = Button((PANEL_X + 200, 292, 180, 44), "Clear")
+        self.btn_first = [
+            Button((PANEL_X, 382, 186, 42), "Player 1", "toggle"),
+            Button((PANEL_X + 194, 382, 186, 42), "Player 2", "toggle"),
+        ]
+        self.btn_start = Button((PANEL_X, 532, PANEL_W, 52), "Start game", "primary")
         self.btn_undo = Button((PANEL_X, 556, 180, 44), "Undo")
         self.btn_edit = Button((PANEL_X + 200, 556, 180, 44), "Edit board")
         self.btn_new = Button((PANEL_X, 612, PANEL_W, 44), "New random board")
@@ -602,10 +618,11 @@ class App:
         if problems:
             self.message = problems[0]
             return
-        self.game = Game(self.board)
+        self.game = Game(self.board, self.first_player)
         self.mode = PLAY
         self.message = ""
         self.flash = {}
+        self._eval_target = self._eval_share = 0.5
         self.request_analysis()
 
     def back_to_setup(self):
@@ -666,6 +683,9 @@ class App:
             elif event.key == pygame.K_c:
                 self.board = [[EMPTY] * W for _ in range(H)]
                 self.message = ""
+            elif event.key == pygame.K_s:
+                self.first_player = 1 - self.first_player
+                self.message = ""
             elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.start_game()
             return
@@ -699,6 +719,12 @@ class App:
                 return
 
         if self.mode == SETUP:
+            for pid, button in enumerate(self.btn_first):
+                if button.hit(pos):
+                    self.first_player = pid
+                    self.message = ""
+                    return
+
             if self.btn_random.hit(pos):
                 self.board = random_board()
                 self.message = ""
@@ -766,12 +792,13 @@ class App:
         self.screen.fill(BG)
 
         for btn in (self.btn_random, self.btn_clear, self.btn_start,
-                    self.btn_undo, self.btn_edit, self.btn_new):
+                    self.btn_undo, self.btn_edit, self.btn_new, *self.btn_first):
             btn.hover = btn.rect.collidepoint(mouse)
 
         result, error, busy = self.analyst.snapshot()
 
         self.draw_header(result)
+        self.draw_eval_bar(result)
         self.draw_board(mouse)
         self.draw_palette(mouse, result)
 
@@ -808,6 +835,46 @@ class App:
 
             tag = self.f_badge.render(f"P{pid + 1}", True, MUTED)
             self.screen.blit(tag, tag.get_rect(midtop=(rect.centerx, rect.bottom + 4)))
+
+    def draw_eval_bar(self, result):
+        """Chess-style eval bar showing the predicted final split of the board.
+
+        A draw sits dead centre; player 1 winning by 8 means they finish with
+        32 of the 56 tiles, so they take 32/56ths of the bar.
+        """
+        if self.game is None:
+            return
+
+        if self.game.is_over():
+            target = self.game.score(0) / NCELLS
+        elif result is not None and result["best"] in result["scores"]:
+            margin = result["scores"][result["best"]]
+            target = (NCELLS + margin) / (2 * NCELLS)
+        else:
+            target = self._eval_target   # hold steady while the solver thinks
+
+        self._eval_target = target
+        self._eval_share += (target - self._eval_share) * 0.2
+
+        rect = pygame.Rect(BOARD_X, EVAL_Y, BOARD_W, EVAL_H)
+        radius = EVAL_H // 2
+        split = rect.left + int(round(rect.width * self._eval_share))
+
+        # player 2 fills the whole bar, then player 1 is painted over the left
+        # of it through a clip, so both ends keep the same rounded silhouette
+        pygame.draw.rect(self.screen, PALETTE[self.game.player_color[1]], rect,
+                         border_radius=radius)
+
+        if split > rect.left:
+            clip = self.screen.get_clip()
+            self.screen.set_clip(pygame.Rect(rect.left, rect.top, split - rect.left, rect.height))
+            pygame.draw.rect(self.screen, PALETTE[self.game.player_color[0]], rect,
+                             border_radius=radius)
+            self.screen.set_clip(clip)
+
+        # keeps the halves apart even when both players are on the same color
+        if rect.left < split < rect.right:
+            pygame.draw.rect(self.screen, INK, (split - 1, rect.top, 2, rect.height))
 
     def draw_board(self, mouse):
         panel = pygame.Rect(BOARD_X - 14, BOARD_Y - 14, BOARD_W + 28, BOARD_H + 28)
@@ -937,11 +1004,6 @@ class App:
                 continue
 
             if self.mode == PLAY and self.game is not None and not self.game.is_over():
-                gain = len(self.game.capture(self.game.turn, c))
-                if gain:
-                    label = self.f_badge.render(f"+{gain}", True, readable_on(PALETTE[c]))
-                    self.screen.blit(label, label.get_rect(center=draw_rect.center))
-
                 if result and result["best"] == c:
                     pygame.draw.rect(self.screen, INK, rect.inflate(14, 14), width=3, border_radius=15)
                     star = self.f_badge.render("BEST", True, INK)
@@ -970,7 +1032,12 @@ class App:
         self.btn_random.draw(self.screen, self.f_body)
         self.btn_clear.draw(self.screen, self.f_body)
 
-        y = 372
+        self.screen.blit(self.f_badge.render("WHO MOVES FIRST", True, MUTED), (PANEL_X, 356))
+        for pid, button in enumerate(self.btn_first):
+            button.selected = pid == self.first_player
+            button.draw(self.screen, self.f_body)
+
+        y = 444
         problems = validate_board(self.board)
         if problems:
             self.screen.blit(self.f_head.render("Not ready yet", True, (196, 64, 76)), (PANEL_X, y))
@@ -984,7 +1051,8 @@ class App:
             y += 30
             note = (
                 f"Player 1 opens on {COLOR_NAMES[self.board[0][0]]}, "
-                f"player 2 on {COLOR_NAMES[self.board[H - 1][W - 1]]}."
+                f"player 2 on {COLOR_NAMES[self.board[H - 1][W - 1]]}. "
+                f"{PLAYER_NAMES[self.first_player]} moves first."
             )
             for line in text_lines(self.f_body, note, PANEL_W):
                 self.screen.blit(self.f_body.render(line, True, MUTED), (PANEL_X, y))
@@ -997,8 +1065,12 @@ class App:
             msg = self.f_small.render(self.message, True, (196, 64, 76))
             self.screen.blit(msg, (PANEL_X, self.btn_start.rect.bottom + 12))
 
-        hint = "R randomize    C clear    1-6 pick color    Enter start"
-        self.screen.blit(self.f_small.render(hint, True, MUTED), (PANEL_X, rect.bottom - 34))
+        hints = ("R randomize    C clear    S swap who starts",
+                 "1-6 pick color    Enter start")
+        top = rect.bottom - 34 - (len(hints) - 1) * 18
+        for line in hints:
+            self.screen.blit(self.f_small.render(line, True, MUTED), (PANEL_X, top))
+            top += 18
 
     def draw_play_panel(self, result, error, busy):
         rect = pygame.Rect(PANEL_X - 14, BOARD_Y - 14, PANEL_W + 28, 604)
@@ -1023,7 +1095,11 @@ class App:
             self.screen.blit(self.f_body.render(note, True, MUTED), (PANEL_X, y))
             y += 40
 
-        self.screen.blit(self.f_head.render("Solver", True, INK), (PANEL_X, y))
+        heading = self.f_head.render("Solver", True, INK)
+        self.screen.blit(heading, (PANEL_X, y))
+        if not over:
+            note = self.f_badge.render(f"RANKED FOR P{self.game.turn + 1}", True, MUTED)
+            self.screen.blit(note, note.get_rect(bottomright=(PANEL_X + PANEL_W, y + heading.get_height())))
         y += 32
 
         if error:
@@ -1041,40 +1117,59 @@ class App:
         else:
             pid = self.game.turn
             best = result["best"]
+            captures = result["captures"]
 
-            row = pygame.Rect(PANEL_X, y, PANEL_W, 52)
-            pygame.draw.rect(self.screen, (243, 246, 252), row, border_radius=10)
-            pygame.draw.rect(self.screen, ACCENT, row, width=2, border_radius=10)
+            # Every legal color, strongest first.  Moves that decline an
+            # available capture sort last whatever they score: the search below
+            # the root never lets a player pass, so those scores are measured
+            # against an opponent who is not allowed to pass back.
+            def rank(colour_id: int) -> tuple:
+                margin = result["scores"][colour_id]
+                if pid == 1:
+                    margin = -margin
+                declines = captures.get(colour_id, 0) == 0 and any(captures.values())
+                return (declines, -margin, colour_id != best, colour_id)
 
-            self.screen.blit(
-                self.f_badge.render(f"BEST FOR P{pid + 1}", True, MUTED), (row.left + 12, row.top + 8)
-            )
+            for colour_id in sorted(result["scores"], key=rank):
+                row = pygame.Rect(PANEL_X, y, PANEL_W, 40)
+                top = colour_id == best
 
-            if best < 0:
-                self.screen.blit(
-                    self.f_body.render("no move", True, MUTED), (row.left + 12, row.top + 26)
-                )
-            else:
-                chip = pygame.Rect(row.left + 12, row.top + 24, 20, 20)
-                pygame.draw.rect(self.screen, PALETTE[best], chip, border_radius=5)
-                self.screen.blit(
-                    self.f_body.render(COLOR_NAMES[best], True, INK), (chip.right + 10, row.top + 24)
-                )
+                pygame.draw.rect(self.screen, (243, 246, 252) if top else (248, 249, 250),
+                                 row, border_radius=9)
+                if top:
+                    pygame.draw.rect(self.screen, ACCENT, row, width=2, border_radius=9)
 
-                score = result["scores"].get(best)
-                if score is not None:
-                    # scores are from player 1's point of view
-                    if score == 0:
-                        verdict, tint = "draw", MUTED
-                    elif (score > 0) == (pid == 0):
-                        verdict, tint = "wins", (46, 140, 86)
-                    else:
-                        verdict, tint = "loses", (196, 64, 76)
-                    label = self.f_body.render(verdict, True, tint)
-                    self.screen.blit(label, label.get_rect(midright=(row.right - 14, row.top + 34)))
+                chip = pygame.Rect(row.left + 12, row.centery - 9, 18, 18)
+                pygame.draw.rect(self.screen, PALETTE[colour_id], chip, border_radius=5)
 
-            y += 62
+                name = self.f_body.render(COLOR_NAMES[colour_id], True, INK if top else (92, 97, 106))
+                self.screen.blit(name, name.get_rect(midleft=(chip.right + 10, row.centery)))
 
+                margin = result["scores"][colour_id]
+                if pid == 1:
+                    margin = -margin
+
+                if margin == 0:
+                    verdict, tint = "draw", MUTED
+                elif margin > 0:
+                    verdict, tint = f"wins by {margin}", (46, 140, 86)
+                else:
+                    verdict, tint = f"loses by {-margin}", (196, 64, 76)
+
+                # A move that declines an available capture is flagged and its
+                # verdict greyed: the sub-search forbids the opponent from
+                # passing back, so the number reads better than it really is.
+                if not captures.get(colour_id, 0) and any(captures.values()):
+                    tint = (176, 181, 190)
+                    tag = self.f_badge.render("no capture", True, (176, 181, 190))
+                    self.screen.blit(tag, tag.get_rect(midleft=(chip.right + 78, row.centery)))
+
+                label = self.f_body.render(verdict, True, tint)
+                self.screen.blit(label, label.get_rect(midright=(row.right - 14, row.centery)))
+
+                y += 46
+
+            y += 6
             stats = f"{result['nodes']:,} nodes in {result['ms']} ms"
             self.screen.blit(self.f_small.render(stats, True, MUTED), (PANEL_X, y))
             y += 22

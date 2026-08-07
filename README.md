@@ -7,7 +7,8 @@ except your own and your opponent's — and every tile of that color touching yo
 becomes yours. When the board is full, whoever holds more tiles wins.
 
 The solver searches the game to the end with alpha-beta, so the move it shows is not a
-heuristic guess: it is the move that wins if a win is available.
+heuristic guess: it is the move that wins if a win is available, and among winning moves the
+one that wins by the most tiles.
 
 ![The game mid-play](screenshot.png)
 
@@ -39,9 +40,15 @@ The app opens in the **board editor** on a random legal board.
 |---|---|
 | Click a color, then click or drag on the board | paint tiles |
 | Right-click | erase a tile |
+| **Who moves first** | pick player 1 or player 2 |
 | `R` / `C` | randomize / clear the board |
+| `S` | swap who starts |
 | `1`–`6` | pick a paint color |
 | `Enter` | start the game |
+
+Player 1 always owns the bottom-left corner and player 2 the top-right, but either can take
+the opening move. Moving first is worth a lot on a random board, so this is the main way to
+hand the advantage over.
 
 **Start** stays disabled until the board is legal, and the panel tells you what is wrong.
 The only rule is that no two orthogonally adjacent tiles may share a color — see
@@ -58,11 +65,18 @@ Once you start, both players share the keyboard and mouse:
 | `E` | back to the editor |
 | `Esc` | quit |
 
-The two locked swatches are the players' current colors. Each unlocked swatch shows `+N`
-for how many tiles it would win you right now, and the solver's pick is ringed with **BEST**.
-The panel gives the verdict for that move — *wins*, *loses*, or *draw* — with perfect play
-from both sides. Territory is outlined rather than shaded, so you can still read the colors
-underneath: player 1's border is solid dark, player 2's is white.
+The two locked swatches are the players' current colors, and the solver's pick is ringed with
+**BEST**. The panel lists every legal move ranked strongest first, each with its verdict under
+perfect play from both sides as a final score — *wins by 6*, *loses by 2*, *draw*. That is the
+exact margin the game will finish on if neither side errs, not an estimate. Moves that capture
+nothing are tagged *no capture* and greyed, and always sort last; see
+[the protocol notes](#solver-protocol) for why their numbers are not comparable.
+
+The bar across the top is the same number drawn as a chess-style eval bar, in the two
+players' current colors. It shows how the 56 tiles are predicted to end up divided: dead
+centre is a draw, and *player 1 wins by 8* puts the split at 32 tiles to 24. Territory on the
+board is outlined rather than shaded, so you can still read the colors underneath — player
+1's border is solid dark, player 2's is white.
 
 ### Editing rules
 
@@ -89,7 +103,8 @@ The split is deliberate: Python owns the rules and the pixels, C++ owns the sear
 - **`main.cpp`** — the original standalone text version. Still works on its own; the GUI does
   not use it.
 
-Openings usually resolve in well under a second.
+Openings typically resolve in half a second or so, and the search only gets cheaper as the
+board fills.
 
 ### Solver protocol
 
@@ -102,14 +117,23 @@ One request per line group, one response per line group:
 > <p1_color> <p2_color> <side_to_move>
 
 < OK
-< BEST <best_color> <color>:<score>,...
+< BEST <best_color> <color>:<score>:<captures>,...
 < NODES <n> <milliseconds>
 < END
 ```
 
-Scores are always from player 1's point of view: `1` means player 1 wins with perfect play,
-`-1` player 2, `0` a draw. `best_color` is `-1` when the game is already over. `QUIT` ends the
-process. Only the side to move is searched.
+Every legal color is scored. A score is the final margin in tiles, always from player 1's
+point of view: `+8` means player 1 finishes 8 tiles ahead with perfect play from both sides,
+`-8` that player 2 does, `0` a draw. `captures` is how many tiles that color claims
+immediately. `best_color` is `-1` when the game is already over. `QUIT` ends the process.
+Only the side to move is searched.
+
+One caveat on the scores. Below the root, the search never lets a player decline an available
+capture — that restriction is what makes the game terminate, since two players who both keep
+passing would never fill the board. So when a *root* move declines a capture, its score comes
+from a search in which the opponent is barred from passing back, which makes it read better
+than it really is. Those moves are reported (with `captures` at 0) but are never chosen as
+`best_color`, and the GUI greys them out and ranks them last.
 
 ## Troubleshooting
 
@@ -140,7 +164,7 @@ picks the right interpreter: `py filler.py`. This bites in particular if MSYS2 i
 
 ## Credits
 
-- **[mattbatwings](https://youtube.com/mattbatwings)** — the game logic and the solver: the
+- **[mattbatwings](https://github.com/mattbatwings)** — the game logic and the solver: the
   bitboard representation, expansion, and the minimax search that everything else is built
   around.
 - **Claude** (Anthropic's Claude Code) — the pygame GUI, the board editor, and the

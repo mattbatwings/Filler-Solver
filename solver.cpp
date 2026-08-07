@@ -9,14 +9,15 @@
 //   > <p1_color> <p2_color> <side_to_move>      side 0 = player 1, 1 = player 2
 //
 //   < OK
-//   < BEST <best_color> <color>:<score>,...
+//   < BEST <best_color> <color>:<score>:<captures>,...
 //   < NODES <n> <milliseconds>
 //   < END
 //
-// Only the side to move is searched.  Scores are always from player 1's point
-// of view: 1 = player 1 wins with perfect play, -1 = player 2 wins, 0 = draw.
-// best_color is -1 when the game is already over.  Any malformed request
-// answers with a single "ERR <reason>".
+// Only the side to move is searched.  A score is the final margin in tiles from
+// player 1's point of view: +8 means player 1 finishes 8 tiles ahead with
+// perfect play from both sides, -8 that player 2 does, 0 a draw.  Among winning
+// moves the solver takes the one that wins by the most.  best_color is -1 when
+// the game is already over.  Any malformed request answers with "ERR <reason>".
 //
 //   > QUIT      terminates.
 
@@ -46,6 +47,10 @@ struct State {
 };
 
 constexpr Bitboard MASK = (1ULL << NCELLS) - 1;
+
+// Scores are final margins, so they span [-NCELLS, NCELLS].  INF sits outside
+// that range and is only ever used as an initial alpha/beta bound.
+constexpr int INF = NCELLS + 1;
 
 Bitboard LEFT;
 Bitboard RIGHT;
@@ -141,6 +146,28 @@ int generate_moves(const State &s, int player_idx, Move *out) {
     return n;
 }
 
+// Every legal color, for the root only: capturing moves first (best gain
+// first, which is the order generate_moves would have produced), then the ones
+// that capture nothing.  The GUI ranks the whole list, so it needs a score for
+// all of them -- but the search below the root keeps its existing policy of
+// ignoring non-capturing moves whenever a capturing one is available.
+int generate_root_moves(const State &s, int player_idx, Move *out) {
+    int n = generate_moves(s, player_idx, out);
+
+    bool covered[6] = {};
+    for (int i = 0; i < n; i++)
+        covered[out[i].color] = true;
+
+    for (int color = 0; color < 6; color++) {
+        if (color == s.p1_color || color == s.p2_color || covered[color])
+            continue;
+
+        out[n++] = {color, s.players[player_idx], 0};
+    }
+
+    return n;
+}
+
 // --- transposition table ------------------------------------------------
 //
 // The neutral part of the board never changes, so within one request a
@@ -180,17 +207,10 @@ static inline uint64_t state_key(const State &s, bool maximizing) {
 int minimax(const State &s, int alpha, int beta, bool maximizing) {
     nodes++;
 
-    if (game_over(s)) {
-        int p1 = popcount(s.players[0]);
-        int p2 = popcount(s.players[1]);
-
-        if (p1 > p2)
-            return 1;
-        else if (p1 < p2)
-            return -1;
-        else
-            return 0;
-    }
+    // The final margin, not just who won: this is what makes the search prefer
+    // the biggest win rather than treating every win as equal.
+    if (game_over(s))
+        return popcount(s.players[0]) - popcount(s.players[1]);
 
     uint64_t key = state_key(s, maximizing);
     TTEntry &slot = tt[key & (TT_SIZE - 1)];
@@ -208,7 +228,7 @@ int minimax(const State &s, int alpha, int beta, bool maximizing) {
     int beta0 = beta;
 
     int player_idx = maximizing ? 0 : 1;
-    int bestEval = maximizing ? -1 : 1;
+    int bestEval = maximizing ? -INF : INF;
 
     Move moves[6];
     int n = generate_moves(s, player_idx, moves);
@@ -239,30 +259,45 @@ int minimax(const State &s, int alpha, int beta, bool maximizing) {
 
 struct Analysis {
     int best_color = -1;
-    array<int, 6> score{};   // score per color, from player 1's point of view
-    array<bool, 6> legal{};  // which colors were actually searched
+    array<int, 6> score{};     // score per color, from player 1's point of view
+    array<int, 6> captures{};  // tiles that color would claim right now
+    array<bool, 6> legal{};    // which colors were actually searched
 };
 
 Analysis best_move(const State &s, bool maximizing) {
     Analysis a;
     a.score.fill(0);
+    a.captures.fill(0);
     a.legal.fill(false);
 
     if (game_over(s))
         return a;
 
     int player_idx = maximizing ? 0 : 1;
-    int best_score = maximizing ? -1 : 1;
+    int best_score = maximizing ? -INF : INF;
 
     Move moves[6];
-    int n = generate_moves(s, player_idx, moves);
+    int n = generate_root_moves(s, player_idx, moves);
+
+    // generate_root_moves puts capturing moves first, so this says whether the
+    // player has any capture available at all.
+    bool has_capture = (n > 0 && moves[0].gain > 0);
 
     for (int i = 0; i < n; i++) {
         State ns = take_turn(s, moves[i].color, moves[i].expanded, maximizing);
-        int score = minimax(ns, -1, 1, !maximizing);
+        // full window per move so every reported score is exact, not a bound
+        int score = minimax(ns, -INF, INF, !maximizing);
 
         a.legal[moves[i].color] = true;
         a.score[moves[i].color] = score;
+        a.captures[moves[i].color] = moves[i].gain;
+
+        // A move that declines an available capture is scored under a search
+        // that forbids the *opponent* from doing the same, so its score comes
+        // out optimistic and is not comparable with the capturing moves.  It
+        // still gets reported, but it cannot be the recommendation.
+        if (has_capture && moves[i].gain == 0)
+            continue;
 
         if (a.best_color == -1 || (maximizing ? score > best_score : score < best_score)) {
             best_score = score;
@@ -331,7 +366,7 @@ static void print_analysis(const char *tag, const Analysis &a) {
         if (!first)
             cout << ',';
 
-        cout << c << ':' << a.score[c];
+        cout << c << ':' << a.score[c] << ':' << a.captures[c];
         first = false;
     }
 
