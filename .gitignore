@@ -1,0 +1,7 @@
+# the solver is compiled on demand from solver.cpp
+solver
+solver.exe
+*.o
+
+__pycache__/
+*.py[cod]
