@@ -69,8 +69,8 @@ The two locked swatches are the players' current colors, and the solver's pick i
 **BEST**. The panel lists every legal move ranked strongest first, each with its verdict under
 perfect play from both sides as a final score — *wins by 6*, *loses by 2*, *draw*. That is the
 exact margin the game will finish on if neither side errs, not an estimate. Moves that capture
-nothing are tagged *no capture* and greyed, and always sort last; see
-[the protocol notes](#solver-protocol) for why their numbers are not comparable.
+nothing are tagged *no capture*, sort last, and deliberately carry no score — see
+[the protocol notes](#solver-protocol) for why no comparable number exists for them.
 
 The bar across the top is the same number drawn as a chess-style eval bar, in the two
 players' current colors. It shows how the 56 tiles are predicted to end up divided: dead
@@ -103,8 +103,10 @@ The split is deliberate: Python owns the rules and the pixels, C++ owns the sear
 - **`main.cpp`** — the original standalone text version. Still works on its own; the GUI does
   not use it.
 
-Openings typically resolve in half a second or so, and the search only gets cheaper as the
-board fills.
+The opening is the expensive position: median around 0.6s, occasionally a few seconds, and
+rarely much longer. Everything after it averages about a tenth of a second, and the search
+only gets cheaper as the board fills. It runs on a worker thread, so the window stays
+responsive while it thinks.
 
 ### Solver protocol
 
@@ -133,7 +135,8 @@ capture — that restriction is what makes the game terminate, since two players
 passing would never fill the board. So when a *root* move declines a capture, its score comes
 from a search in which the opponent is barred from passing back, which makes it read better
 than it really is. Those moves are reported (with `captures` at 0) but are never chosen as
-`best_color`, and the GUI greys them out and ranks them last.
+`best_color`, and the GUI ranks them last and shows no score for them at all. Treat their
+score as an upper bound, not a value: the true figure is that or worse, by an unknown amount.
 
 ## Troubleshooting
 
@@ -164,7 +167,7 @@ picks the right interpreter: `py filler.py`. This bites in particular if MSYS2 i
 
 ## Credits
 
-- **[mattbatwings](https://youtube.com/mattbatwings)** — the game logic and the solver: the
+- **[mattbatwings](https://github.com/mattbatwings)** — the game logic and the solver: the
   bitboard representation, expansion, and the minimax search that everything else is built
   around.
 - **Claude** (Anthropic's Claude Code) — the pygame GUI, the board editor, and the

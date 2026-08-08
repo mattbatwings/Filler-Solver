@@ -1119,16 +1119,20 @@ class App:
             best = result["best"]
             captures = result["captures"]
 
-            # Every legal color, strongest first.  Moves that decline an
-            # available capture sort last whatever they score: the search below
-            # the root never lets a player pass, so those scores are measured
-            # against an opponent who is not allowed to pass back.
+            # Colors that actually take tiles.  If there are none the player is
+            # forced to pass, and then every move is on equal footing and every
+            # score is meaningful.
+            capturing = {c for c in result["scores"] if captures.get(c, 0)}
+
+            def declines(colour_id: int) -> bool:
+                return bool(capturing) and colour_id not in capturing
+
+            # Strongest first, with the capture-less moves last.
             def rank(colour_id: int) -> tuple:
                 margin = result["scores"][colour_id]
                 if pid == 1:
                     margin = -margin
-                declines = captures.get(colour_id, 0) == 0 and any(captures.values())
-                return (declines, -margin, colour_id != best, colour_id)
+                return (declines(colour_id), -margin, colour_id != best, colour_id)
 
             for colour_id in sorted(result["scores"], key=rank):
                 row = pygame.Rect(PANEL_X, y, PANEL_W, 40)
@@ -1145,27 +1149,28 @@ class App:
                 name = self.f_body.render(COLOR_NAMES[colour_id], True, INK if top else (92, 97, 106))
                 self.screen.blit(name, name.get_rect(midleft=(chip.right + 10, row.centery)))
 
-                margin = result["scores"][colour_id]
-                if pid == 1:
-                    margin = -margin
-
-                if margin == 0:
-                    verdict, tint = "draw", MUTED
-                elif margin > 0:
-                    verdict, tint = f"wins by {margin}", (46, 140, 86)
+                if declines(colour_id):
+                    # No comparable number exists for these.  Scoring one means
+                    # playing it and then searching a game in which the
+                    # opponent may not pass back, so what comes out is an upper
+                    # bound rather than a value -- printing it would invite a
+                    # comparison it cannot support.
+                    note = self.f_badge.render("no capture", True, (176, 181, 190))
+                    self.screen.blit(note, note.get_rect(midleft=(chip.right + 78, row.centery)))
                 else:
-                    verdict, tint = f"loses by {-margin}", (196, 64, 76)
+                    margin = result["scores"][colour_id]
+                    if pid == 1:
+                        margin = -margin
 
-                # A move that declines an available capture is flagged and its
-                # verdict greyed: the sub-search forbids the opponent from
-                # passing back, so the number reads better than it really is.
-                if not captures.get(colour_id, 0) and any(captures.values()):
-                    tint = (176, 181, 190)
-                    tag = self.f_badge.render("no capture", True, (176, 181, 190))
-                    self.screen.blit(tag, tag.get_rect(midleft=(chip.right + 78, row.centery)))
+                    if margin == 0:
+                        verdict, tint = "draw", MUTED
+                    elif margin > 0:
+                        verdict, tint = f"wins by {margin}", (46, 140, 86)
+                    else:
+                        verdict, tint = f"loses by {-margin}", (196, 64, 76)
 
-                label = self.f_body.render(verdict, True, tint)
-                self.screen.blit(label, label.get_rect(midright=(row.right - 14, row.centery)))
+                    label = self.f_body.render(verdict, True, tint)
+                    self.screen.blit(label, label.get_rect(midright=(row.right - 14, row.centery)))
 
                 y += 46
 
