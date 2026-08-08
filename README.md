@@ -108,22 +108,6 @@ rarely much longer. Everything after it averages about a tenth of a second, and 
 only gets cheaper as the board fills. It runs on a worker thread, so the window stays
 responsive while it thinks.
 
-### Solver protocol
-
-One request per line group, one response per line group:
-
-```
-> SOLVE
-> <56 chars>    tile colors, '0'..'5', index i = y*8 + x, y = 0 is the bottom row
-> <56 chars>    owners, '.' neutral / '0' player 1 / '1' player 2
-> <p1_color> <p2_color> <side_to_move>
-
-< OK
-< BEST <best_color> <color>:<score>:<captures>,...
-< NODES <n> <milliseconds>
-< END
-```
-
 Every legal color is scored. A score is the final margin in tiles, always from player 1's
 point of view: `+8` means player 1 finishes 8 tiles ahead with perfect play from both sides,
 `-8` that player 2 does, `0` a draw. `captures` is how many tiles that color claims
