@@ -167,7 +167,7 @@ picks the right interpreter: `py filler.py`. This bites in particular if MSYS2 i
 
 ## Credits
 
-- **[mattbatwings](https://github.com/mattbatwings)** — the game logic and the solver: the
+- **[mattbatwings](https://youtube.com/mattbatwings)** — the game logic and the solver: the
   bitboard representation, expansion, and the minimax search that everything else is built
   around.
 - **Claude** (Anthropic's Claude Code) — the pygame GUI, the board editor, and the
