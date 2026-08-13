@@ -115,21 +115,7 @@ rarely much longer. Everything after it averages about a tenth of a second, and 
 only gets cheaper as the board fills. It runs on a worker thread, so the window stays
 responsive while it thinks.
 
-### Solver protocol
-
-One request per line group, one response per line group:
-
-```
-> SOLVE
-> <56 chars>    tile colors, '0'..'5', index i = y*8 + x, y = 0 is the bottom row
-> <56 chars>    owners, '.' neutral / '0' player 1 / '1' player 2
-> <p1_color> <p2_color> <side_to_move>
-
-< OK
-< BEST <best_color> <color>:<score>:<captures>,...
-< NODES <n> <milliseconds>
-< END
-```
+### Solver
 
 Every legal color is scored. A score is the final margin in tiles, always from player 1's
 point of view: `+8` means player 1 finishes 8 tiles ahead with perfect play from both sides,
@@ -174,7 +160,7 @@ picks the right interpreter: `py filler.py`. This bites in particular if MSYS2 i
 
 ## Credits
 
-- **[mattbatwings](https://github.com/mattbatwings)** — the game logic and the solver: the
+- **[mattbatwings](https://youtube.com/mattbatwings)** — the game logic and the solver: the
   bitboard representation, expansion, and the minimax search that everything else is built
   around.
 - **Claude** (Anthropic's Claude Code) — the pygame GUI, the board editor, and the
