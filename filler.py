@@ -115,9 +115,16 @@ def swatch_rect(c: int) -> pygame.Rect:
 
 NEIGHBOURS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
+# The two cells each player's home corner touches, in fill order.
+HOME_NEIGHBOURS = (
+    ((1, 0), (0, 1)),                    # player 1, bottom left
+    ((W - 1, H - 2), (W - 2, H - 1)),    # player 2, top right
+)
+
 
 def random_board() -> list[list[int]]:
-    """A legal Filler board: no two orthogonally adjacent cells share a color.
+    """A legal Filler board: no two orthogonally adjacent cells share a color,
+    and neither home corner has both of its neighbours in the same color.
 
     The two home corners are allowed to match -- whoever moves first simply
     leaves that color behind on their opening turn.
@@ -128,11 +135,21 @@ def random_board() -> list[list[int]]:
 
         for y in range(H):
             for x in range(W):
-                choices = [
-                    c
-                    for c in range(6)
-                    if (x == 0 or c != board[y][x - 1]) and (y == 0 or c != board[y - 1][x])
-                ]
+                banned = set()
+                if x:
+                    banned.add(board[y][x - 1])
+                if y:
+                    banned.add(board[y - 1][x])
+
+                # A corner touches exactly two cells.  If those match, that
+                # player opens facing a single color and has just one capture
+                # to choose from.
+                if (x, y) == HOME_NEIGHBOURS[0][1]:
+                    banned.add(board[0][1])
+                elif (x, y) == HOME_NEIGHBOURS[1][1]:
+                    banned.add(board[H - 2][W - 1])
+
+                choices = [c for c in range(6) if c not in banned]
 
                 if not choices:
                     ok = False
@@ -166,6 +183,11 @@ def validate_board(board: list[list[int]]) -> list[str]:
 
     if clashes:
         problems.append(f"{clashes} pair{'s' if clashes != 1 else ''} of touching tiles share a color")
+
+    for pid, ((ax, ay), (bx, by)) in enumerate(HOME_NEIGHBOURS):
+        first, second = board[ay][ax], board[by][bx]
+        if first != EMPTY and first == second:
+            problems.append(f"both tiles beside player {pid + 1}'s corner are the same color")
 
     return problems
 
